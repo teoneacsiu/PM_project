@@ -14,50 +14,93 @@ const int pinButonDreapta = 12;
 const int pinLdrStanga = A0;
 const int pinLdrDreapta = A1;
 
-// Stare sistem
+// Mod functionare
 bool modAuto = false;   // pornim in MANUAL
-int unghiServo = 90;
+
+// Valori pentru servo 360
+const int STOP_SERVO = 90;
+const int LEFT_SERVO = 80;
+const int RIGHT_SERVO = 105;
 
 // Reglaje
-const int pragDiferenta = 100;   // il poti schimba: 20, 30, 40, 50
-const int pasAuto = 1;          // cat misca in AUTO
-const int pasManual = 2;        // cat misca in MANUAL
-const int unghiMin = 20;
-const int unghiMax = 160;
+const int pragDiferenta = 100;
+const unsigned long debounceDelay = 200;
+const unsigned long intervalLCD = 250;
 
-// Debounce simplu pentru buton MOD
+// Debounce buton MOD
 bool ultimMod = HIGH;
 unsigned long ultimTimpMod = 0;
-const unsigned long debounceDelay = 200;
-
-// Pentru actualizare LCD
-unsigned long ultimUpdateLCD = 0;
-const unsigned long intervalLCD = 250;
 
 // Variabile senzori
 int ldrStanga = 0;
 int ldrDreapta = 0;
 int diferenta = 0;
 
-void afiseazaEcran() {
-  lcd.clear();
+// Unghi estimat
+int unghiEstimat = 90;
+const int unghiMin = 20;
+const int unghiMax = 160;
 
+// stare miscare: -1 = stanga, 0 = stop, 1 = dreapta
+int stareMiscare = 0;
+
+// cat de des actualizam unghiul estimat
+unsigned long ultimUpdateUnghi = 0;
+const unsigned long intervalUnghi = 80;
+
+// Pentru LCD
+unsigned long ultimUpdateLCD = 0;
+
+void opresteServo() {
+  servoMotor.write(STOP_SERVO);
+  stareMiscare = 0;
+}
+
+void mergiStanga() {
+  servoMotor.write(LEFT_SERVO);
+  stareMiscare = -1;
+}
+
+void mergiDreapta() {
+  servoMotor.write(RIGHT_SERVO);
+  stareMiscare = 1;
+}
+
+void actualizeazaUnghiEstimat() {
+  if (millis() - ultimUpdateUnghi >= intervalUnghi) {
+    ultimUpdateUnghi = millis();
+
+    if (stareMiscare == -1) {
+      unghiEstimat--;
+      if (unghiEstimat < unghiMin) unghiEstimat = unghiMin;
+    }
+    else if (stareMiscare == 1) {
+      unghiEstimat++;
+      if (unghiEstimat > unghiMax) unghiEstimat = unghiMax;
+    }
+  }
+}
+
+void afiseazaEcran() {
   lcd.setCursor(0, 0);
   lcd.print("Mod:");
   if (modAuto) {
-    lcd.print("AUTO ");
+    lcd.print("AUTO   ");
   } else {
-    lcd.print("MAN  ");
+    lcd.print("MANUAL ");
   }
 
-  lcd.print(" U:");
-  lcd.print(unghiServo);
+  lcd.setCursor(11, 0);
+  if (unghiEstimat < 100) lcd.print("U:0");
+  else lcd.print("U:");
+  lcd.print(unghiEstimat);
 
   lcd.setCursor(0, 1);
   lcd.print("S:");
   lcd.print(ldrStanga);
   lcd.print(" D:");
   lcd.print(ldrDreapta);
+  lcd.print("   ");
 }
 
 void setup() {
@@ -68,72 +111,77 @@ void setup() {
   pinMode(pinButonDreapta, INPUT_PULLUP);
 
   servoMotor.attach(pinServo);
-  servoMotor.write(unghiServo);
+  opresteServo();
 
+  lcd.clear();
   afiseazaEcran();
 }
 
 void loop() {
-  // Citire butoane
   bool stareMod = digitalRead(pinButonMod);
   bool stareStanga = digitalRead(pinButonStanga);
   bool stareDreapta = digitalRead(pinButonDreapta);
 
-  // Citire senzori
   ldrStanga = analogRead(pinLdrStanga);
   ldrDreapta = analogRead(pinLdrDreapta);
   diferenta = ldrStanga - ldrDreapta;
 
-  // Buton MOD
+  // schimbare mod
   if (stareMod == LOW && ultimMod == HIGH && millis() - ultimTimpMod > debounceDelay) {
     modAuto = !modAuto;
     ultimTimpMod = millis();
-    afiseazaEcran();
+    opresteServo();
   }
   ultimMod = stareMod;
 
-  // MOD MANUAL
-  if (!modAuto) {
-    if (stareStanga == LOW) {
-      unghiServo -= pasManual;
-      if (unghiServo < unghiMin) unghiServo = unghiMin;
-      servoMotor.write(unghiServo);
-      delay(40);
-    }
-
-    if (stareDreapta == LOW) {
-      unghiServo += pasManual;
-      if (unghiServo > unghiMax) unghiServo = unghiMax;
-      servoMotor.write(unghiServo);
-      delay(40);
+  // MANUAL
+ if (!modAuto) {
+  if (stareStanga == LOW && stareDreapta == HIGH) {
+    if (unghiEstimat > unghiMin) {
+      mergiStanga();
+    } else {
+      opresteServo();
     }
   }
-
-  // MOD AUTO
+  else if (stareDreapta == LOW && stareStanga == HIGH) {
+    if (unghiEstimat < unghiMax) {
+      mergiDreapta();
+    } else {
+      opresteServo();
+    }
+  }
   else {
-    if (abs(diferenta) > pragDiferenta) {
+    opresteServo();
+  }
+}
 
-      // Daca LDR stanga vede mai multa lumina
-      if (diferenta > 0) {
-        unghiServo -= pasAuto;
-        if (unghiServo < unghiMin) unghiServo = unghiMin;
-        servoMotor.write(unghiServo);
-      }
-
-      // Daca LDR dreapta vede mai multa lumina
-      else {
-        unghiServo += pasAuto;
-        if (unghiServo > unghiMax) unghiServo = unghiMax;
-        servoMotor.write(unghiServo);
-      }
-
-      delay(30);
+  // AUTO
+  else {
+  if (abs(diferenta) <= pragDiferenta) {
+    opresteServo();
+  }
+  else if (diferenta > 0) {
+    if (unghiEstimat > unghiMin) {
+      mergiStanga();
+    } else {
+      opresteServo();
     }
   }
+  else {
+    if (unghiEstimat < unghiMax) {
+      mergiDreapta();
+    } else {
+      opresteServo();
+    }
+  }
+}
 
-  // Update LCD
+  actualizeazaUnghiEstimat();
+
   if (millis() - ultimUpdateLCD > intervalLCD) {
     afiseazaEcran();
     ultimUpdateLCD = millis();
   }
+
+  delay(20);
 }
